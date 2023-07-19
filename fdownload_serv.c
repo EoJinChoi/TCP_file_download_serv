@@ -110,7 +110,6 @@ int main(int argc, char *argv[])
         printf("file send complete\n");
         closedir(dir);
     }
-
     close(serv_sock);
     close(clnt_sock);
 
