@@ -61,7 +61,7 @@ int main(int argc, char *argv[])
             printf("Failed to open directory.\n");
         }
 
-        //폴더 내 파일 write
+        //폴더 내 파일 목록 write
         while((entry = readdir(dir)) != NULL) {
             if(strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
                 continue;
