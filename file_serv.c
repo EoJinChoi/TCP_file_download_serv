@@ -94,18 +94,13 @@ int main(int argc, char *argv[])
             char size[BUF_SIZE];
             snprintf(size, sizeof(size), "%zu", fsize);
             strcpy(send_pkt->fileSize, size);
-            // send_pkt->fileSize = fsize;
-            strcpy(send_pkt->fileContent, "");
-            // strcat(name, "   ");
-            // strcat(name, size);// 파일 이름, 크기 한 문자열로 합치기
 
-            // write(clnt_sock, name, sizeof(name));
+            strcpy(send_pkt->fileContent, "");
+
             write(clnt_sock, send_pkt, sizeof(pkt_t));
         }
         strcpy(send_pkt->fileName, msg);//
         write(clnt_sock, send_pkt, sizeof(pkt_t));
-        // write(clnt_sock, msg, sizeof(msg));
-        // printf("send file list\n");
 
         // 선택된 파일 이름 read
         read_cnt = read(clnt_sock, file_name, BUF_SIZE);
@@ -113,7 +108,6 @@ int main(int argc, char *argv[])
             error_handling("read() error");
 
         strcpy(send_pkt->fileName, file_name);//
-        // *send_pkt->fileName = file_name; //
         printf("%s", send_pkt->fileName);
 
         if(access(folderPath, F_OK) == -1) {
@@ -135,15 +129,11 @@ int main(int argc, char *argv[])
         fsize=ftell(file);
         fseek(file, 0, SEEK_SET);
 
-        // size_t size = htonl(fsize);
-        // write(clnt_sock, &size, sizeof(fsize)); // 파일 크기 전송
-
         char size[BUF_SIZE];
         snprintf(size, sizeof(size), "%zu", fsize);
         strcpy(send_pkt->fileSize, size);//
-        // send_pkt->fileSize = size;
 
-        char temp[BUF_SIZE];
+        // File write
         while(nsize != fsize)
         {
             int fpsize = fread(buf, 1, BUF_SIZE, file);
@@ -161,12 +151,7 @@ int main(int argc, char *argv[])
             
             send_pkt->size = fpsize;
             write(clnt_sock, send_pkt, sizeof(pkt_t));//
-            // write(clnt_sock, buf, fpsize);
         }
-        // strcpy(send_pkt->fileContent, temp);
-        // printf("\ntemp: %s\n", temp);
-        // // *send_pkt->fileContent = temp;//
-        // write(clnt_sock, send_pkt, sizeof(pkt_t));//
 
         fclose(file);
         printf("file send complete\n");
