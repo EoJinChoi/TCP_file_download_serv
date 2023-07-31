@@ -17,7 +17,7 @@ typedef struct {
     char fileContent[BUF_SIZE];
     int size;
 } pkt_t;
-pkt_t *send_pkt;//
+pkt_t *send_pkt;
 
 int main(int argc, char *argv[])
 {
@@ -31,9 +31,8 @@ int main(int argc, char *argv[])
     struct dirent* entry;
     char msg[] = "end";
 
-    send_pkt = (pkt_t *) malloc(sizeof(pkt_t));//
+    send_pkt = (pkt_t *) malloc(sizeof(pkt_t));
     memset(send_pkt, 0, sizeof(pkt_t));
-    // struct pkt_t *pkt;
 
     struct sockaddr_in serv_addr, clnt_addr;
     socklen_t clnt_addr_size;
@@ -81,7 +80,7 @@ int main(int argc, char *argv[])
             char name[BUF_SIZE];
             snprintf(name, sizeof(name), "%s", entry->d_name);
             printf("%s\n", name);
-            strcpy(send_pkt->fileName, entry->d_name);//
+            strcpy(send_pkt->fileName, entry->d_name);
 
             // 파일 크기 구하기
             file = fopen(entry->d_name, "rb");
@@ -107,7 +106,7 @@ int main(int argc, char *argv[])
         if(read_cnt == -1)
             error_handling("read() error");
 
-        strcpy(send_pkt->fileName, file_name);//
+        strcpy(send_pkt->fileName, file_name);
         printf("%s", send_pkt->fileName);
 
         if(access(folderPath, F_OK) == -1) {
@@ -131,7 +130,7 @@ int main(int argc, char *argv[])
 
         char size[BUF_SIZE];
         snprintf(size, sizeof(size), "%zu", fsize);
-        strcpy(send_pkt->fileSize, size);//
+        strcpy(send_pkt->fileSize, size);
 
         // File write
         while(nsize != fsize)
@@ -145,12 +144,12 @@ int main(int argc, char *argv[])
             if(fpsize < BUF_SIZE)
             {
                 send_pkt->size = fpsize;
-                write(clnt_sock, send_pkt, sizeof(pkt_t));//
+                write(clnt_sock, send_pkt, sizeof(pkt_t));
                 break;
             }
             
             send_pkt->size = fpsize;
-            write(clnt_sock, send_pkt, sizeof(pkt_t));//
+            write(clnt_sock, send_pkt, sizeof(pkt_t));
         }
 
         fclose(file);
