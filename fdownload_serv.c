@@ -65,10 +65,25 @@ int main(int argc, char *argv[])
         while((entry = readdir(dir)) != NULL) {
             if(strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
                 continue;
-            printf("%s\n", entry->d_name);
-            int a = write(clnt_sock, entry->d_name, sizeof(entry->d_name));
-            if(a == -1)
-                error_handling("write() error");
+
+            char name[BUF_SIZE];
+            snprintf(name, sizeof(name), "%s", entry->d_name);
+            printf("%s\n", name);
+
+            // 파일 크기 구하기
+            file = fopen(entry->d_name, "rb");
+            size_t fsize;
+            fseek(file, 0, SEEK_END);
+            fsize=ftell(file);
+            fseek(file, 0, SEEK_SET);
+            fclose(file);
+
+            char size[BUF_SIZE];
+            snprintf(size, sizeof(size), "%zu", fsize);
+            strcat(name, "   ");
+            strcat(name, size);// 파일 이름, 크기 한 문자열로 합치기
+
+            write(clnt_sock, name, sizeof(name));
         }
         write(clnt_sock, msg, sizeof(msg));
         // printf("send file list\n");
