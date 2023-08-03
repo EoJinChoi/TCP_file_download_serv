@@ -1,3 +1,10 @@
+/*
+Stop-and-Wait Protocol 구현
+• uecho_server.c와 uecho_client.c는 신뢰성 있는 데이터 전송을 보장하지 않습니다. (손실된 패킷을 복구하는 기능이 없음)
+• 이를 보완하여 신뢰성 있는 데이터 전송을 보장하는 Stop-and-WaitProtocol 기반의 프로그램을 구현하세요.
+• 파일 전송이 완료되면 Throughput을 출력하세요.(Throughput = 받은 데이터 양/전송 시간)
+*/
+
 #define _XOPEN_SOURCE 200  
 
 #include <stdio.h>
