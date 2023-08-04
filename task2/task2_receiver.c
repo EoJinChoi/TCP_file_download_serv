@@ -38,7 +38,7 @@ int main(int argc, char *argv[])
     int serv_sock;
     socklen_t clnt_adr_sz;
     FILE *file;
-    char file_name[BUF_SIZE] = "photo.jpeg";
+    char file_name[BUF_SIZE] = "abc.jpeg";
     int seq = -1;
 
     data_pkt = (pkt_t *) malloc(sizeof(pkt_t));
@@ -69,21 +69,27 @@ int main(int argc, char *argv[])
         printf("Failed to create file.\n");
         exit(1);
     }
+
     while(1)
     {
         clnt_adr_sz = sizeof(clnt_adr);
         int recv = recvfrom(serv_sock, data_pkt, sizeof(pkt_t), 0, (struct sockaddr*)&clnt_adr, &clnt_adr_sz);
         if(recv > 0)
+        {
             send_pkt->ack = 1;
-        else
-            send_pkt->ack = 0;
+            sendto(serv_sock, send_pkt, sizeof(pkt_t), 0, (struct sockaddr*)&clnt_adr, clnt_adr_sz);
+        }
+        // else
+        //     send_pkt->ack = 0;
+
+        // sendto(serv_sock, send_pkt, sizeof(pkt_t), 0, (struct sockaddr*)&clnt_adr, clnt_adr_sz);
+
         if(seq == data_pkt->seq)
             continue;
     
         send_pkt->seq = data_pkt->seq;
-        sendto(serv_sock, send_pkt, sizeof(pkt_t), 0, (struct sockaddr*)&clnt_adr, clnt_adr_sz);
 
-        printf("\nsize: %d\n", atoi(data_pkt->fileSize));
+        printf("\n %d size: %d\n", send_pkt->seq, atoi(data_pkt->fileSize));
         fwrite(data_pkt->fileContent, 1, atoi(data_pkt->fileSize), file);
 
         if(data_pkt->size < BUF_SIZE)
