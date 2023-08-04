@@ -11,7 +11,7 @@ Simple Remote Shell 프로그램 구현
 • Makefile을 만들어서 컴파일할 수 있어야 합니다.
 */
 
-#define _XOPEN_SOURCE 200
+// #define _XOPEN_SOURCE 200
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,7 +25,7 @@ Simple Remote Shell 프로그램 구현
 #include <sys/select.h>
 
 #define BUF_SIZE 1024
-#define PATH_MAX 1024
+// #define PATH_MAX 1024
 void error_handling(char *message);
 
 typedef struct {
@@ -79,9 +79,9 @@ int main(int argc, char *argv[])
     FD_SET(serv_sock, &reads);
     fd_max = serv_sock;
 
-    char path[PATH_MAX];
+    char path[BUF_SIZE];
 
-    if ( getcwd(path, PATH_MAX) == NULL ) {
+    if ( getcwd(path, BUF_SIZE) == NULL ) {
         fprintf(stderr, "Error: getcwd() cannot execute\n") ;
         exit(1); 
     } 
