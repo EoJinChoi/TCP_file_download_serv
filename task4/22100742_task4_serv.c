@@ -18,6 +18,13 @@ int clnt_cnt;
 int clnt_socks[MAX_CLNT];
 pthread_mutex_t mutx;
 
+typedef struct {
+    char findStr[BUF_SIZE];
+    int cnt;
+}found;
+
+found findInfo[11]; 
+
 typedef struct node{
     struct node *child[26];
     int end;
@@ -59,10 +66,8 @@ void insert(node *root, char* str)
     ptr--;
     *ptr = 0;
 
-    // printf("str1: %s\n", string);
     strcpy(lowString, string);
 
-    
     // 소문자로 변경
     for(int k = 0; k < strlen(lowString); k++)
     {
@@ -102,25 +107,66 @@ void showtree(node* root)
     }
 }
 
-int search(node* root, const char* str)
+void search1(node* root, const char* str)
 {
-    char reverseStr[LEN];
-    for(int i = 0; i < strlen(str); i++)
-    {
-        reverseStr[strlen(str) - i-1] = str[i];
-    }
-    printf("re: %s\n", reverseStr);
     int len = strlen(str);
-    node* now = root;
+    char reverseStr[LEN];
 
     for(int i = 0; i < len; i++)
     {
-        if(!now->child[reverseStr[i] - 'a'])
-            return 0;
-        if(i == 0) return 1;
-        now = now->child[reverseStr[i] - 'a'];
+        reverseStr[len - i - 1] = str[i];
     }
-    return now->end;
+    reverseStr[len] = 0;
+    
+    search2(root, reverseStr, reverseStr, 0);
+}
+
+int n = 0;
+void search2(node* root, char* str1, char* str2, int find)
+{
+    int len = strlen(str2);
+    node* now = root;
+    char *ptr1, *ptr2;
+    ptr1 = str1;
+    ptr2 = str2;
+
+    if(*ptr2 == NULL)
+    {
+        find = 1;
+        ptr2 = ptr1;
+    }
+    if(find == 1 && now->end)
+    {
+        if(n >= 10)
+        {
+            Sort();
+            if(findInfo[9].cnt < now->cnt)
+            {
+                strcpy(findInfo[9].findStr, now->name);
+                findInfo[9].cnt = now->cnt;
+            }
+        }
+        else
+        {
+            strcpy(findInfo[n].findStr, now->name);
+            findInfo[n].cnt = now->cnt;
+            n++;
+        }
+    }
+
+    for(int i = 0; i < 26; i++)
+    {
+        if(now->child[i])
+        {
+            if(*ptr2 - 'a' == i)
+                search2(now->child[i], ptr1, ptr2 + 1, find);
+            else
+            {
+                ptr2 = ptr1;
+                search2(now->child[i], ptr1, ptr2, find);
+            }
+        }
+    }
 }
 
 int main(int argc, char *argv[])
@@ -170,7 +216,7 @@ void * handle_clnt(void *arg)
     int str_len = 0;
     FILE *file;
     char content[LEN];
-    // char tokens[LEN][20];
+    char word[LEN];
     
     node* root = newNode();
     file = fopen("data.txt", "rb");
@@ -178,16 +224,58 @@ void * handle_clnt(void *arg)
     for(int i = 0; i < 5; i++)
     {
         fgets(content, LEN, file);
-        
         insert(root, content);
     }
 
-    printf("-------------show all word--------------\n");
-    showtree(root);
+    // printf("-------------show all word--------------\n");
+    // showtree(root);
+    // printf("----------------------------------------\n");
 
-    printf("\ndo I have?\n");
-    printf("%s : %s\n", "Pohang", search(root, "pohang")? "Yes":"No");
-    printf("%s : %s\n", "ang", search(root, "taurant")? "Yes":"No");
+    while(1)
+    {
+        int read_cnt = read(clnt_sock, word, LEN);
+        if(read_cnt == 0)
+            break;
+
+        n = 0;
+        printf("word : %s\n", word);
+        search1(root, word);
+
+        if(strlen(word) == 0) n = 0;
+        printf("n: %d\n", n);
+
+        Sort();
+        for(int i = 0; i < n; i++)
+        {
+            printf("%s   %d\n", findInfo[i].findStr, findInfo[i].cnt);
+        }
+
+        write(clnt_sock, &n, sizeof(int));
+        for(int i = 0; i < n; i++)
+        {
+            write(clnt_sock, &findInfo[i], sizeof(findInfo[i]));
+        }
+        // strcpy(findInfo[n+1].findStr, "end");
+        // write(clnt_sock, &findInfo[n+1], sizeof(findInfo[n+1]));
+    }
+}
+
+void Sort()
+{
+    found temp;
+    int i = 0, j = 0;
+    for (i = n; i > 1; i--)
+    {
+        for (j = 1; j < i; j++)
+        {
+            if (findInfo[j - 1].cnt < findInfo[j].cnt)
+            {
+                temp = findInfo[j - 1];
+                findInfo[j - 1] = findInfo[j];
+                findInfo[j] = temp;
+            }
+        }
+    }
 }
 
 void error_handling(char *message)
