@@ -18,6 +18,11 @@ int clnt_cnt;
 int clnt_socks[MAX_CLNT];
 pthread_mutex_t mutx;
 
+typedef struct { // handle_clnt 함수에 전달할 parameter
+    int socket;
+    char *file;
+}parameter;
+
 typedef struct {
     char findStr[BUF_SIZE];
     int cnt;
@@ -25,6 +30,7 @@ typedef struct {
 
 found findInfo[11]; 
 
+// Trie
 typedef struct node{
     struct node *child[26];
     int end;
@@ -51,11 +57,13 @@ void insert(node *root, char* str)
     node* now = root;
     char *ptr = string;
 
+    // db파일에서 읽은 검색어와 횟수 구분하기 위해 공백으로 split
     while (token != NULL) {
         strcpy(tokens[j], token);
         j++;
         token = strtok(NULL, " ");
     }
+    // 검색어 저장
     for(int k = 0; k < j-1; k++)
     {
         strcpy(ptr, tokens[k]);
@@ -75,6 +83,7 @@ void insert(node *root, char* str)
     }
     int len = strlen(lowString);
 
+    // Trie에 insert
     for(int i = len - 1; i >= 0; i--){
         if(lowString[i] == ' ')
         {
@@ -107,6 +116,7 @@ void showtree(node* root)
     }
 }
 
+// 검색할 단어 reverse
 void search1(node* root, const char* str)
 {
     int len = strlen(str);
@@ -122,6 +132,7 @@ void search1(node* root, const char* str)
 }
 
 int n = 0;
+// Trie에서 검색할 단어 search
 void search2(node* root, char* str1, char* str2, int find)
 {
     int len = strlen(str2);
@@ -175,6 +186,8 @@ int main(int argc, char *argv[])
     struct sockaddr_in serv_adr, clnt_adr;
     int clnt_adr_sz;
     pthread_t t_id;
+    parameter pm;
+
     if(argc != 3) {
         printf("Usage : %s <port>\n", argv[0]);
         exit(1);
@@ -202,7 +215,10 @@ int main(int argc, char *argv[])
         clnt_socks[clnt_cnt++] = clnt_sock;
         pthread_mutex_unlock(&mutx);
 
-        pthread_create(&t_id, NULL, handle_clnt, (void*)&clnt_sock);
+        pm.socket = clnt_sock;
+        pm.file = argv[2];
+
+        pthread_create(&t_id, NULL, handle_clnt, (void*)&pm);
         pthread_detach(t_id);
         printf("Connected client IP: %s \n", inet_ntoa(clnt_adr.sin_addr));
     }
@@ -212,24 +228,21 @@ int main(int argc, char *argv[])
 
 void * handle_clnt(void *arg)
 {
-    int clnt_sock = *((int*)arg);
+    parameter *data = (parameter*)arg;
+    int clnt_sock = data->socket;
     int str_len = 0;
     FILE *file;
     char content[LEN];
     char word[LEN];
     
     node* root = newNode();
-    file = fopen("data.txt", "rb");
+    file = fopen(data->file, "rb");
 
     for(int i = 0; i < 5; i++)
     {
         fgets(content, LEN, file);
         insert(root, content);
     }
-
-    // printf("-------------show all word--------------\n");
-    // showtree(root);
-    // printf("----------------------------------------\n");
 
     while(1)
     {
@@ -249,17 +262,17 @@ void * handle_clnt(void *arg)
         {
             printf("%s   %d\n", findInfo[i].findStr, findInfo[i].cnt);
         }
+        printf("\n");
 
         write(clnt_sock, &n, sizeof(int));
         for(int i = 0; i < n; i++)
         {
             write(clnt_sock, &findInfo[i], sizeof(findInfo[i]));
         }
-        // strcpy(findInfo[n+1].findStr, "end");
-        // write(clnt_sock, &findInfo[n+1], sizeof(findInfo[n+1]));
     }
 }
 
+// db에서 읽은 검색어 횟수 내림차순으로 정렬
 void Sort()
 {
     found temp;
