@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 199309L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,6 +8,7 @@
 #include <sys/socket.h>
 #include <pthread.h>
 #include <getopt.h>
+#include <time.h>
 
 #define BUF_SIZE 1024
 #define MAX_CLNT 256
@@ -19,10 +22,12 @@ void *connecting(void *arg);
 void *read_from_sender(void *arg);
 void *read_from_rPeer(void *arg);
 void *write_file(void *arg);
+void printStatus(int id, int max, int file_size, int *accept_socks, int *connect_socks, int *recvFrom, double *rTime);
 
 int clnt_cnt = 0;
 int clnt_socks[MAX_CLNT];
 pthread_mutex_t mutx;
+pthread_mutex_t printMutex;
 
 // Linked List
 typedef struct list
@@ -106,7 +111,7 @@ typedef struct
 } lParameter;
 
 typedef struct
-{ // connect thread에 전달할 parameter
+{ // connecting thread에 전달할 parameter
     int *connect_socks;
     int id;
     int max;
@@ -115,7 +120,7 @@ typedef struct
 } cParameter;
 
 typedef struct
-{ // reading thread 함수에 전달할 parameter
+{ // read thread 함수에 전달할 parameter
     int sender_sock;
     int id;
     int max;
@@ -124,10 +129,12 @@ typedef struct
     int *accept_socks;
     int *connect_socks;
     linkedList *list;
+    int *recvFrom;
+    double *rTime;
 } rParameter;
 
 typedef struct
-{ // reading thread 함수에 전달할 parameter
+{ // write thread 함수에 전달할 parameter
     int sender_sock;
     int id;
     int max;
@@ -140,7 +147,6 @@ typedef struct
 typedef struct
 {
     int file_seq;
-    // char fileContent[1000];
     int fileSize;
 } pkt_t;
 
@@ -278,23 +284,21 @@ void sender(int max, char *file_name, int segmentSize, char *listenPort)
 
     file_send(file_name, segmentSize, max, clnt_socks);
 
-    // while (1)
-    // {
-    // }
-
     close(serv_sock);
     printf("complete\n");
 }
 
 void file_send(char *file_name, int segmentSize, int max, int *clnt_socks)
 {
-    // printf("file send\n"); //
     FILE *file;
     int file_size;
     char fname[BUF_SIZE];
     strcpy(fname, file_name);
     char *buf;
     buf = (char *)malloc((segmentSize * 1024) * sizeof(char));
+    struct timespec begin, end;
+    begin.tv_nsec = 0;
+    end.tv_nsec = 0;
 
     pkt_t *file_pkt;
 
@@ -325,6 +329,11 @@ void file_send(char *file_name, int segmentSize, int max, int *clnt_socks)
     for (int i = 0; i < max; i++)
         sending[i] = 0;
 
+    double time = 0;
+    double sTime[max];
+    for (int i = 0; i < max; i++)
+        sTime[i] = 0;
+
     while (readSize != file_size)
     {
         int fsize = fread(buf, 1, segmentSize * 1024, file);
@@ -334,7 +343,8 @@ void file_send(char *file_name, int segmentSize, int max, int *clnt_socks)
         pct = ((readSize * 1.0) / file_size) * 100;
 
         // system("clear");
-        // printf("\x1b[%dA\r", max + 1);
+        if (segment_num != 0)
+            printf("\x1b[%dA\r", max + 2);
         printf("Sending Peer [");
         for (int i = 0; i < 20; i++)
         {
@@ -344,17 +354,21 @@ void file_send(char *file_name, int segmentSize, int max, int *clnt_socks)
                 printf(" ");
         }
 
-        printf("] %.0f%% (%d/%d Bytes)\n", pct, readSize, file_size);
+        if (segment_num != 0)
+            clock_gettime(CLOCK_MONOTONIC, &end);
+        time += end.tv_nsec - begin.tv_nsec;
+        sTime[rPeer_id] += end.tv_nsec - begin.tv_nsec;
+        printf("] %.0f%% (%d/%d Bytes) %.1lfMbps (%lfs)\n", pct, readSize, file_size, ((readSize * 1.0) / 1024 / 1024 / (time / 1000000000)), time / 1000000000);
 
         for (int i = 0; i < max; i++)
-            printf("To Receiving Peer #%d: %d\n", i + 1, sending[i]);
+            printf("To Receiving Peer #%d: %.1lfMbps (%d Bytes Sent / %lfs)\n", i, ((sending[i] * 1.0) / 1024 / 1024 / (sTime[i] / 1000000000)), sending[i], sTime[i] / 1000000000);
 
         if (fsize < segmentSize * 1024)
         {
             file_pkt->fileSize = fsize;
             file_pkt->file_seq = segment_num;
 
-            write(clnt_socks[rPeer_id], buf, segmentSize * 1024); //
+            write(clnt_socks[rPeer_id], buf, segmentSize * 1024);
             write(clnt_socks[rPeer_id], file_pkt, sizeof(pkt_t));
             printf("fsize: %d\n", fsize);
             break;
@@ -362,7 +376,9 @@ void file_send(char *file_name, int segmentSize, int max, int *clnt_socks)
 
         file_pkt->fileSize = fsize;
         file_pkt->file_seq = segment_num;
-        write(clnt_socks[rPeer_id], buf, segmentSize * 1024); //
+        clock_gettime(CLOCK_MONOTONIC, &begin);
+        // receiving peer들에게 segment 전송
+        write(clnt_socks[rPeer_id], buf, segmentSize * 1024);
         write(clnt_socks[rPeer_id], file_pkt, sizeof(pkt_t));
 
         rPeer_id++;
@@ -387,6 +403,10 @@ void file_send(char *file_name, int segmentSize, int max, int *clnt_socks)
 }
 
 int receiving = 0;
+int receiveFromSender = 0;
+double total_time = 0;
+double recv_time = 0;
+
 void receiver(char *senderIp, char *senderPort, char *listen_port)
 {
     int sender_sock, serv_sock;
@@ -433,13 +453,19 @@ void receiver(char *senderIp, char *senderPort, char *listen_port)
         rPeer_port[i] = malloc(sizeof(char) * BUF_SIZE);
     }
 
+    int ids[max - 1];
+    int k = 0;
     // receiving peer 정보 read
     for (int i = 0; i < max; i++)
     {
         read(sender_sock, rPeer_ip[i], BUF_SIZE);
         read(sender_sock, rPeer_port[i], BUF_SIZE);
         if (i != id)
+        {
             printf("id: %d, ip: %s, port: %s\n", i, rPeer_ip[i], rPeer_port[i]);
+            ids[k] = i;
+            k++;
+        }
     }
 
     // listen, connect thread
@@ -486,6 +512,14 @@ void receiver(char *senderIp, char *senderPort, char *listen_port)
     L->cur = NULL;
     L->head = NULL;
 
+    double rTime[max - 1];
+    for (int i = 0; i < max - 1; i++)
+        rTime[i] = 0;
+
+    int receiveFrom[max - 1];
+    for (int i = 0; i < max - 1; i++)
+        receiveFrom[i] = 0;
+
     rPm = malloc(max * sizeof(rParameter));
     rPm[0].sender_sock = sender_sock;
     for (int i = 0; i < max; i++)
@@ -497,6 +531,8 @@ void receiver(char *senderIp, char *senderPort, char *listen_port)
         rPm[i].accept_socks = accept_socks;
         rPm[i].connect_socks = connect_socks;
         rPm[i].list = L;
+        rPm[i].recvFrom = receiveFrom;
+        rPm[i].rTime = rTime;
     }
 
     wPm.sender_sock = sender_sock;
@@ -507,11 +543,8 @@ void receiver(char *senderIp, char *senderPort, char *listen_port)
     wPm.list = L;
     strcpy(wPm.file_name, file_name);
 
-    printf("thread\n");
-
+    // printf("thread\n");
     int j = 1;
-    int pre = receiving;
-    // printf("Receiving Peer %d [                    ] 0%% (0/%d Bytes)", id, file_size);
 
     pthread_create(&readS_thread, NULL, read_from_sender, &rPm[0]);
     for (int i = 0; i < id; i++)
@@ -528,39 +561,10 @@ void receiver(char *senderIp, char *senderPort, char *listen_port)
         pthread_detach(readR_thread);
         j++;
     }
-    // pthread_create(&readR_thread, NULL, read_from_rPeer, &rPm);
     pthread_create(&write_thread, NULL, write_file, &wPm);
-    while (1)
-    {
-        pthread_mutex_lock(&mutx);
-        if (receiving != pre)
-        {
-            printf("Receiving Peer %d [", id);
-            double pct = (receiving * 1.0) / file_size * 100;
-            for (int i = 0; i < 20; i++)
-            {
-                if (i < (int)pct / 5)
-                    printf("#");
-                else
-                    printf(" ");
-            }
-            printf("] %.0f%% (%d/%d Bytes)\n", pct, receiving, file_size);
-            pre = receiving;
-        }
-        if (receiving == file_size)
-        {
-            pthread_mutex_unlock(&mutx);
-            break;
-        }
-        pthread_mutex_unlock(&mutx);
-    }
     pthread_join(readS_thread, &thread_return);
-    // pthread_join(readR_thread, &thread_return);
     pthread_join(write_thread, &thread_return);
 
-    // while (1)
-    // {
-    // }
     for (int i = 0; i < max; i++)
     {
         free(rPeer_ip[i]);
@@ -631,6 +635,8 @@ void *connecting(void *arg)
     return NULL;
 }
 
+int isFirstRecv = 0;
+
 void *read_from_sender(void *arg)
 {
     pkt_t *file_pkt;
@@ -642,9 +648,13 @@ void *read_from_sender(void *arg)
     rParameter *data = (rParameter *)arg;
     char *buf;
     buf = (char *)malloc((data->segmentSize * 1024) * sizeof(char));
+    struct timespec begin, end;
+    begin.tv_nsec = 0;
+    end.tv_nsec = 0;
 
     while (1)
     {
+        clock_gettime(CLOCK_MONOTONIC, &begin);
         while (1)
         {
             int read_cnt = recv(data->sender_sock, buf, data->segmentSize * 1024, MSG_PEEK);
@@ -660,22 +670,27 @@ void *read_from_sender(void *arg)
             int read_cnt = recv(data->sender_sock, file_pkt, sizeof(pkt_t), MSG_PEEK);
             if (read_cnt == sizeof(pkt_t))
                 break;
-
-            // printf("\nsize: %d\n", read_cnt);
         }
         recv(data->sender_sock, file_pkt, sizeof(pkt_t), 0);
+        clock_gettime(CLOCK_MONOTONIC, &end);
 
         pthread_mutex_lock(&mutx);
+        insert(data->list, file_pkt->file_seq, buf, file_pkt->fileSize, data->segmentSize); // linked list에 insert
+        isFirstRecv++;
+
         receiving += file_pkt->fileSize;
+        receiveFromSender += file_pkt->fileSize;
+
+        recv_time += (end.tv_nsec - begin.tv_nsec);
+        total_time += (end.tv_nsec - begin.tv_nsec);
+
+        if (isFirstRecv != 1)
+            printf("\x1b[%dA\r", data->max + 2); // curser 이동
+        printStatus(data->id, data->max, data->file_size, data->accept_socks, data->connect_socks, data->recvFrom, data->rTime);
+
         pthread_mutex_unlock(&mutx);
 
-        // printf("[recvS]:%d, seq: %d, fsize: %d\n", data->sender_sock, file_pkt->file_seq, file_pkt->fileSize);
-
-        pthread_mutex_lock(&mutx);
-        insert(data->list, file_pkt->file_seq, buf, file_pkt->fileSize, data->segmentSize);
-        // printNodes(data->list);
-        pthread_mutex_unlock(&mutx);
-
+        // 다른 receiving peer에게 segment 전송
         for (int i = 0; i < data->id; i++)
         {
             write(data->accept_socks[i], buf, data->segmentSize * 1024);
@@ -688,14 +703,13 @@ void *read_from_sender(void *arg)
         }
     }
 
-    // file_pkt->fileSize = 0;
     strcpy(buf, "end");
     for (int i = 0; i < data->id; i++)
         write(data->accept_socks[i], buf, data->segmentSize * 1024);
     for (int i = 0; i < (data->max - data->id - 1); i++)
         write(data->connect_socks[i], buf, data->segmentSize * 1024);
 
-    printf("read_from_sender_complete\n");
+    // printf("read_from_sender_complete\n");
     free(buf);
     free(file_pkt);
 
@@ -707,26 +721,28 @@ void *read_from_rPeer(void *arg)
     pkt_t *file_pkt;
 
     file_pkt = (pkt_t *)malloc(sizeof(pkt_t));
-    memset(file_pkt, 0, sizeof(pkt_t)); ///
+    memset(file_pkt, 0, sizeof(pkt_t));
 
     // printf("read from rPeer\n");
     rParameter *data = (rParameter *)arg;
     char *buf;
     buf = (char *)malloc((data->segmentSize * 1024) * sizeof(char));
+    struct timespec begin, end;
+    begin.tv_nsec = 0;
+    end.tv_nsec = 0;
 
     while (1)
     {
         int read_cnt;
-        // printf("[recvR %d] rPeer in\n", data->sender_sock);
+        clock_gettime(CLOCK_MONOTONIC, &begin);
+
         while (1)
         {
             read_cnt = recv(data->sender_sock, buf, data->segmentSize * 1024, MSG_PEEK);
-            // printf("[recvR %d] read_cnt: %d\n", data->sender_sock, read_cnt);
             if (read_cnt == data->segmentSize * 1024)
                 break;
         }
         recv(data->sender_sock, buf, data->segmentSize * 1024, 0);
-        // printf("[recvR %d] 1\n", data->sender_sock);
 
         if (!strcmp(buf, "end"))
             break;
@@ -738,21 +754,32 @@ void *read_from_rPeer(void *arg)
                 break;
         }
         recv(data->sender_sock, file_pkt, sizeof(pkt_t), 0);
+        clock_gettime(CLOCK_MONOTONIC, &end);
 
         pthread_mutex_lock(&mutx);
+        insert(data->list, file_pkt->file_seq, buf, file_pkt->fileSize, data->segmentSize); // linked list에 insert
+        isFirstRecv++;
+
         receiving += file_pkt->fileSize;
-        pthread_mutex_unlock(&mutx);
-        // printf("[recvR %d] 2\n", data->sender_sock);
+        if (data->id == 0)
+        {
+            data->recvFrom[data->sender_sock - data->connect_socks[0]] += file_pkt->fileSize;
+            data->rTime[data->sender_sock - data->connect_socks[0]] += (end.tv_nsec - begin.tv_nsec);
+        }
+        else
+        {
+            data->recvFrom[data->sender_sock - data->accept_socks[0]] += file_pkt->fileSize;
+            data->rTime[data->sender_sock - data->accept_socks[0]] += (end.tv_nsec - begin.tv_nsec);
+        }
+        total_time += (end.tv_nsec - begin.tv_nsec);
 
-        // printf("[%d recvR %d], seq: %d, fsize: %d\n", data->id, data->sender_sock, file_pkt->file_seq, file_pkt->fileSize);
+        if (isFirstRecv != 1)
+            printf("\x1b[%dA\r", data->max + 2); // curser 이동
+        printStatus(data->id, data->max, data->file_size, data->accept_socks, data->connect_socks, data->recvFrom, data->rTime);
 
-        pthread_mutex_lock(&mutx);
-        insert(data->list, file_pkt->file_seq, buf, file_pkt->fileSize, data->segmentSize);
-        // printNodes(data->list);
         pthread_mutex_unlock(&mutx);
-        // printf("[recvR %d] 3\n", data->sender_sock);
     }
-    printf("read_from_rPeer_complete\n");
+    // printf("read_from_rPeer_complete\n");
     free(buf);
     free(file_pkt);
 
@@ -761,7 +788,7 @@ void *read_from_rPeer(void *arg)
 
 void *write_file(void *arg)
 {
-    printf("write file\n");
+    // printf("write file\n");
     wParameter *data = (wParameter *)arg;
     int write_seq = 0;
     FILE *file;
@@ -772,11 +799,9 @@ void *write_file(void *arg)
         pthread_mutex_lock(&mutx);
         if (data->list->head != NULL && data->list->head->seq == write_seq)
         {
-            // if (data->list->head->seq == write_seq)
-            // {
             // printf("write_seq: %d\n", write_seq);
             fwrite(data->list->head->fileContent, 1, data->list->head->file_size, file);
-            // printf("write_seq: %d, filesize: %d, segmentSize: %d\n", write_seq, data->list->head->file_size, data->segmentSize * 1024);
+
             if (data->list->head->file_size < data->segmentSize * 1024)
             {
                 pthread_mutex_unlock(&mutx);
@@ -784,7 +809,6 @@ void *write_file(void *arg)
             }
             deleteNode(data->list);
             write_seq++;
-            // }
         }
         pthread_mutex_unlock(&mutx);
     }
@@ -792,6 +816,31 @@ void *write_file(void *arg)
     printf("write complete\n");
 
     return NULL;
+}
+
+void printStatus(int id, int max, int file_size, int *accept_socks, int *connect_socks, int *recvFrom, double *rTime)
+{
+    printf("Receiving Peer %d [", id);
+    double pct = (receiving * 1.0) / file_size * 100;
+    for (int i = 0; i < 20; i++)
+    {
+        if (i < (int)pct / 5)
+            printf("#");
+        else
+            printf(" ");
+    }
+    printf("] %.0lf%% (%d/%d Bytes) %.1lfMbps (%lfs)\n", pct, receiving, file_size, ((receiving * 1.0) / 1024 / 1024 / (total_time / 1000000000)), total_time / 1000000000);
+
+    printf("From Sending Peer : %.1lfMbps (%d Bytes Sent/%lfs)\n", ((receiveFromSender * 1.0) / 1024 / 1024 / (recv_time / 1000000000)), receiveFromSender, recv_time / 1000000000);
+    for (int i = 0; i < id; i++)
+        printf("From Receiving Peer #%d : %.1lfMbps (%d Bytes Sent/%lfs)\n", accept_socks[i] - accept_socks[0], ((recvFrom[i] * 1.0) / 1024 / 1024 / (rTime[i] / 1000000000)), recvFrom[i], rTime[i] / 1000000000);
+    for (int i = 0; i < (max - id - 1); i++)
+        if (id == 0)
+            printf("From Receiving Peer #%d : %.1lfMbps (%d Bytes Sent/%lfs)\n", connect_socks[i] - connect_socks[0] + 1, ((recvFrom[i + id] * 1.0) / 1024 / 1024 / (rTime[i + id] / 1000000000)), recvFrom[i + id], rTime[i + id] / 1000000000);
+        else
+            printf("From Receiving Peer #%d : %.1lfMbps (%d Bytes Sent/%lfs)\n", connect_socks[i] - accept_socks[0] + 1, ((recvFrom[i + id] * 1.0) / 1024 / 1024 / (rTime[i + id] / 1000000000)), recvFrom[i + id], rTime[i + id] / 1000000000);
+
+    printf("\n");
 }
 
 void error_handling(char *message)
